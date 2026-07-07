@@ -10,7 +10,7 @@ import {
   DestroyCategoryTask,
   localized,
 } from "mailspring-exports";
-import { OutlineView } from "mailspring-component-kit";
+import { OutlineView, DisclosureTriangle, ScrollRegion } from "mailspring-component-kit";
 
 const FOLDERS = [
   {
@@ -63,6 +63,7 @@ export default class AccountFoldersSidebar extends React.Component {
     this.state = {
       ...this._getStateFromStores(),
       collapsedNodes: {},
+      collapsedAccounts: {},
       contextMenu: null,
       createDialog: null,
       hiddenCategoryIds: {},
@@ -119,6 +120,7 @@ export default class AccountFoldersSidebar extends React.Component {
       return {
         ...this._getStateFromStores(),
         collapsedNodes: prevState.collapsedNodes,
+        collapsedAccounts: prevState.collapsedAccounts,
         contextMenu: prevState.contextMenu,
         createDialog: prevState.createDialog,
         hiddenCategoryIds,
@@ -234,6 +236,48 @@ export default class AccountFoldersSidebar extends React.Component {
     });
 
     return root;
+  };
+
+  _onAccountDragStart = (event, account) => {
+    event.dataTransfer.setData("mailspring-account-reorder", account.id);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  _onAccountDragOver = (event, account) => {
+    if (!event.dataTransfer.types.includes("mailspring-account-reorder")) {
+      return;
+    }
+    event.preventDefault();
+    if (this.state.dragOverAccountId !== account.id) {
+      this.setState({ dragOverAccountId: account.id });
+    }
+  };
+
+  _onAccountDragEnd = () => {
+    if (this.state.dragOverAccountId) {
+      this.setState({ dragOverAccountId: null });
+    }
+  };
+
+  _onAccountDrop = (event, account, index) => {
+    const sourceId = event.dataTransfer.getData("mailspring-account-reorder");
+    this.setState({ dragOverAccountId: null });
+    if (!sourceId || sourceId === account.id) {
+      return;
+    }
+    event.preventDefault();
+    Actions.reorderAccount(sourceId, index);
+  };
+
+  _isAccountCollapsed = accountId => !!this.state.collapsedAccounts[accountId];
+
+  _toggleAccountCollapsed = accountId => {
+    this.setState(prevState => ({
+      collapsedAccounts: {
+        ...prevState.collapsedAccounts,
+        [accountId]: !prevState.collapsedAccounts[accountId],
+      },
+    }));
   };
 
   _nodeStateKey = (accountId, pathKey) => `${accountId}:${pathKey}`;
@@ -402,14 +446,39 @@ export default class AccountFoldersSidebar extends React.Component {
     if (!menu || !menu.node) {
       return;
     }
+    const node = menu.node;
+    const parentPath = node.isAccountHeader
+      ? null
+      : (node.category && node.category.path) || node.path || null;
     this.setState({
       contextMenu: null,
       createDialog: {
+        mode: "create",
         x: menu.x,
         y: menu.y,
-        account: menu.node.account,
-        parentPath: menu.node.category.path,
+        account: node.account,
+        parentPath,
         value: "",
+      },
+    });
+  };
+
+  _onContextMenuRename = () => {
+    const menu = this.state.contextMenu;
+    if (!menu || !menu.node || !menu.node.category) {
+      return;
+    }
+    const node = menu.node;
+    const parts = this._pathPartsForCategory(node.category);
+    this.setState({
+      contextMenu: null,
+      createDialog: {
+        mode: "rename",
+        x: menu.x,
+        y: menu.y,
+        account: node.account,
+        category: node.category,
+        value: parts[parts.length - 1] || node.label,
       },
     });
   };
@@ -440,7 +509,25 @@ export default class AccountFoldersSidebar extends React.Component {
     if (!dialog) {
       return;
     }
-    this._onCreateCategoryFromAction(dialog.account, dialog.parentPath, dialog.value);
+    if (dialog.mode === "rename") {
+      const value = (dialog.value || "").trim();
+      if (value) {
+        const rawPath = String(dialog.category.path);
+        const slashIdx = rawPath.lastIndexOf("/");
+        const newName = slashIdx > 0 ? `${rawPath.slice(0, slashIdx)}/${value}` : value;
+        if (newName !== rawPath) {
+          Actions.queueTask(
+            SyncbackCategoryTask.forRenaming({
+              path: dialog.category.path,
+              accountId: dialog.account.id,
+              newName,
+            })
+          );
+        }
+      }
+    } else {
+      this._onCreateCategoryFromAction(dialog.account, dialog.parentPath, dialog.value);
+    }
     this._hideCreateDialog();
   };
 
@@ -481,13 +568,17 @@ export default class AccountFoldersSidebar extends React.Component {
     const contextClass = this._extractContextClass(event.target);
     const node = contextClass ? this._contextMenuNodesById[contextClass] : null;
 
-    if (!node || !node.isCustom) {
+    if (!node) {
       this._hideContextMenu();
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
+
+    if (node.perspective) {
+      this._onOpenFolder(node.perspective);
+    }
 
     this.setState({
       contextMenu: {
@@ -508,7 +599,7 @@ export default class AccountFoldersSidebar extends React.Component {
     const selected = node.perspective ? this._isSelected(node.perspective) : false;
     const childItems = (node.children || []).map(child => this._asOutlineItem(child, account));
 
-    if (node.isCustom) {
+    if (node.category || node.path) {
       this._contextMenuNodesById[contextClass] = {
         ...node,
         account,
@@ -519,7 +610,7 @@ export default class AccountFoldersSidebar extends React.Component {
       id: outlineId,
       name: node.label,
       iconName: this._iconNameForNode(node),
-      className: node.isCustom ? contextClass : undefined,
+      className: node.category || node.path ? contextClass : undefined,
       count,
       selected,
       collapsed: hasChildren ? this._isNodeCollapsed(accountId, node.pathKey || node.key) : false,
@@ -535,8 +626,8 @@ export default class AccountFoldersSidebar extends React.Component {
     };
   };
 
-  _standardFolderKeyByPath = account => {
-    const keyByPath = {};
+  _standardCategoriesByKey = account => {
+    const categoryByKey = {};
     const rolesByKey = {
       inbox: ["inbox"],
       sent: ["sent"],
@@ -547,17 +638,24 @@ export default class AccountFoldersSidebar extends React.Component {
     };
     Object.keys(rolesByKey).forEach(key => {
       rolesByKey[key].forEach(role => {
+        if (categoryByKey[key]) {
+          return;
+        }
         const category = CategoryStore.getCategoryByRole(account, role);
         if (category && category.path) {
-          keyByPath[String(category.path).toLowerCase()] = key;
+          categoryByKey[key] = category;
         }
       });
     });
-    return keyByPath;
+    return categoryByKey;
   };
 
   _itemsForAccount = account => {
-    const keyByPath = this._standardFolderKeyByPath(account);
+    const categoryByKey = this._standardCategoriesByKey(account);
+    const keyByPath = {};
+    Object.keys(categoryByKey).forEach(key => {
+      keyByPath[String(categoryByKey[key].path).toLowerCase()] = key;
+    });
     const childrenByFolderKey = {};
     const customRoots = [];
 
@@ -579,6 +677,7 @@ export default class AccountFoldersSidebar extends React.Component {
         label: folder.label,
         iconName: folder.iconName,
         perspective: folder.perspective,
+        category: categoryByKey[folder.folderKey],
         children: childrenByFolderKey[folder.folderKey] || [],
       };
       return this._asOutlineItem(node, account);
@@ -620,24 +719,56 @@ export default class AccountFoldersSidebar extends React.Component {
 
     return (
       <div className="account-folders-sidebar" ref={this._setSidebarRef}>
-        {accounts.map(account => (
-          <OutlineView
-            key={account.id}
-            title={this._accountLabel(account)}
-            items={this._itemsForAccount(account)}
-          />
-        ))}
+        <ScrollRegion className="account-folders-scroll">
+        {accounts.map((account, index) => {
+          const collapsed = this._isAccountCollapsed(account.id);
+          const dragOver = this.state.dragOverAccountId === account.id;
+          const headerContextClass = `ctx-folder-account-${account.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+          this._contextMenuNodesById[headerContextClass] = {
+            isAccountHeader: true,
+            account,
+            label: this._accountLabel(account),
+          };
+          return (
+            <div key={account.id} className="account-section">
+              <div
+                className={`account-section-header ${headerContextClass}${dragOver ? " drag-over" : ""}`}
+                draggable
+                onClick={() => this._toggleAccountCollapsed(account.id)}
+                onDragStart={event => this._onAccountDragStart(event, account)}
+                onDragOver={event => this._onAccountDragOver(event, account)}
+                onDragLeave={this._onAccountDragEnd}
+                onDragEnd={this._onAccountDragEnd}
+                onDrop={event => this._onAccountDrop(event, account, index)}
+              >
+                <DisclosureTriangle visible collapsed={collapsed} />
+                <div className="account-section-title">{this._accountLabel(account)}</div>
+              </div>
+              {!collapsed && <OutlineView title="" items={this._itemsForAccount(account)} />}
+            </div>
+          );
+        })}
+        </ScrollRegion>
         {contextMenu ? (
           <div
             className="custom-folder-context-menu"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button type="button" className="menu-item" onClick={this._onContextMenuCreate}>
-              {localized("Create new item")}
+              {contextMenu.node.isAccountHeader
+                ? localized("New Folder")
+                : localized("New Subfolder")}
             </button>
-            <button type="button" className="menu-item" onClick={this._onContextMenuDelete}>
-              {`${localized("Delete")} ${contextMenu.node.label}`}
-            </button>
+            {contextMenu.node.isCustom && contextMenu.node.category ? (
+              <button type="button" className="menu-item" onClick={this._onContextMenuRename}>
+                {localized("Rename")}
+              </button>
+            ) : null}
+            {contextMenu.node.isCustom && contextMenu.node.category ? (
+              <button type="button" className="menu-item" onClick={this._onContextMenuDelete}>
+                {`${localized("Delete")} ${contextMenu.node.label}`}
+              </button>
+            ) : null}
           </div>
         ) : null}
         {createDialog ? (
@@ -649,15 +780,19 @@ export default class AccountFoldersSidebar extends React.Component {
               autoFocus
               type="text"
               value={createDialog.value}
-              placeholder={localized("Create new item")}
+              placeholder={
+                createDialog.mode === "rename"
+                  ? localized("Rename")
+                  : localized("Create new item")
+              }
               onChange={this._onCreateDialogInputChange}
               onKeyDown={this._onCreateDialogKeyDown}
             />
             <div className="actions">
-              <button type="button" className="menu-item" onClick={this._onCreateDialogConfirm}>
-                {localized("Create")}
+              <button type="button" className="btn btn-emphasis" onClick={this._onCreateDialogConfirm}>
+                {createDialog.mode === "rename" ? localized("Rename") : localized("Create")}
               </button>
-              <button type="button" className="menu-item" onClick={this._hideCreateDialog}>
+              <button type="button" className="btn" onClick={this._hideCreateDialog}>
                 {localized("Cancel")}
               </button>
             </div>

@@ -6,14 +6,69 @@
 	height: 100%;
 	min-height: 0;
 	padding: 0;
-	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 	background-color: transparent;
 	color: @text-color;
 }
 
 
+.account-folders-sidebar .account-folders-scroll {
+	flex: 1;
+	min-height: 0;
+}
+
+
 .account-folders-sidebar .outline-view {
 	margin-bottom: @padding-base-vertical;
+}
+
+
+.account-folders-sidebar .account-section .outline-view {
+	margin-top: 0;
+	padding-top: 0 !important;
+}
+
+
+.account-folders-sidebar .account-section .outline-view .heading {
+	display: none;
+}
+
+
+.account-folders-sidebar .account-section-header {
+	display: flex;
+	align-items: center;
+	padding: 10px 10px 0 4px;
+	cursor: default;
+	user-select: none;
+	font-weight: 600;
+	font-size: 0.9em;
+	color: @text-color-subtle;
+	border-top: 2px solid transparent;
+}
+
+
+.account-folders-sidebar .account-section-header.drag-over {
+	border-top-color: @accent-primary;
+}
+
+
+.account-folders-sidebar .account-section-header .disclosure-triangle {
+	flex-shrink: 0;
+	padding: 4px 6px;
+	width: 20px;
+}
+
+
+.account-folders-sidebar .account-section-title {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: 1.2;
+	height: auto;
+	padding: 3px 0;
+	margin: 0;
 }
 
 
@@ -90,10 +145,8 @@
 }
 
 
-.account-folders-sidebar .custom-folder-create-dialog .actions .menu-item {
+.account-folders-sidebar .custom-folder-create-dialog .actions .btn {
 	flex: 1;
-	padding: 6px 8px;
-	text-align: center;
 }
 
 // Hide Mailspring's default account sidebar to avoid unified inbox UI.
