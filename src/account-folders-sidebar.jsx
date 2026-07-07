@@ -53,7 +53,9 @@ export default class AccountFoldersSidebar extends React.Component {
 
   static containerStyles = {
     order: 0,
-    flexShrink: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
   };
 
   constructor(props) {
@@ -138,6 +140,7 @@ export default class AccountFoldersSidebar extends React.Component {
       const perspective = folder.makePerspective(account.id);
       return {
         key: `std-${account.id}-${folder.key}`,
+        folderKey: folder.key,
         label: folder.label,
         perspective,
         iconName: (perspective && perspective.iconName) || "folder.png",
@@ -532,21 +535,56 @@ export default class AccountFoldersSidebar extends React.Component {
     };
   };
 
+  _standardFolderKeyByPath = account => {
+    const keyByPath = {};
+    const rolesByKey = {
+      inbox: ["inbox"],
+      sent: ["sent"],
+      drafts: ["drafts"],
+      archive: ["archive", "all"],
+      spam: ["spam"],
+      trash: ["trash"],
+    };
+    Object.keys(rolesByKey).forEach(key => {
+      rolesByKey[key].forEach(role => {
+        const category = CategoryStore.getCategoryByRole(account, role);
+        if (category && category.path) {
+          keyByPath[String(category.path).toLowerCase()] = key;
+        }
+      });
+    });
+    return keyByPath;
+  };
+
   _itemsForAccount = account => {
+    const keyByPath = this._standardFolderKeyByPath(account);
+    const childrenByFolderKey = {};
+    const customRoots = [];
+
+    this._customFolderTreeForAccount(account).forEach(node => {
+      const folderKey = keyByPath[node.pathKey];
+      if (folderKey && !node.isCustom && node.children.length > 0) {
+        childrenByFolderKey[folderKey] = (childrenByFolderKey[folderKey] || []).concat(
+          node.children
+        );
+      } else {
+        customRoots.push(node);
+      }
+    });
+
     const standardItems = this._standardFoldersForAccount(account).map(folder => {
       const node = {
         key: folder.key,
+        pathKey: folder.folderKey,
         label: folder.label,
         iconName: folder.iconName,
         perspective: folder.perspective,
-        children: [],
+        children: childrenByFolderKey[folder.folderKey] || [],
       };
       return this._asOutlineItem(node, account);
     });
 
-    const customTreeItems = this._customFolderTreeForAccount(account).map(node =>
-      this._asOutlineItem(node, account)
-    );
+    const customTreeItems = customRoots.map(node => this._asOutlineItem(node, account));
 
     return standardItems.concat(customTreeItems);
   };
