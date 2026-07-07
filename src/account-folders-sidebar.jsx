@@ -248,25 +248,45 @@ export default class AccountFoldersSidebar extends React.Component {
       return;
     }
     event.preventDefault();
-    if (this.state.dragOverAccountId !== account.id) {
-      this.setState({ dragOverAccountId: account.id });
+    const rect = event.currentTarget.getBoundingClientRect();
+    const before = event.clientY < rect.top + rect.height / 2;
+    if (this.state.dragOverAccountId !== account.id || this.state.dragOverBefore !== before) {
+      this.setState({ dragOverAccountId: account.id, dragOverBefore: before });
     }
+  };
+
+  _onAccountDragLeave = event => {
+    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) {
+      return;
+    }
+    this._onAccountDragEnd();
   };
 
   _onAccountDragEnd = () => {
     if (this.state.dragOverAccountId) {
-      this.setState({ dragOverAccountId: null });
+      this.setState({ dragOverAccountId: null, dragOverBefore: null });
     }
   };
 
   _onAccountDrop = (event, account, index) => {
     const sourceId = event.dataTransfer.getData("mailspring-account-reorder");
-    this.setState({ dragOverAccountId: null });
-    if (!sourceId || sourceId === account.id) {
+    const before = this.state.dragOverBefore;
+    this.setState({ dragOverAccountId: null, dragOverBefore: null });
+    if (!sourceId) {
       return;
     }
     event.preventDefault();
-    Actions.reorderAccount(sourceId, index);
+    const accounts = this.state.accounts || [];
+    const sourceIndex = accounts.findIndex(a => a.id === sourceId);
+    if (sourceIndex === -1) {
+      return;
+    }
+    const insertAt = index + (before ? 0 : 1);
+    const newIndex = insertAt > sourceIndex ? insertAt - 1 : insertAt;
+    if (newIndex === sourceIndex) {
+      return;
+    }
+    Actions.reorderAccount(sourceId, newIndex);
   };
 
   _isAccountCollapsed = accountId => !!this.state.collapsedAccounts[accountId];
@@ -729,17 +749,25 @@ export default class AccountFoldersSidebar extends React.Component {
             account,
             label: this._accountLabel(account),
           };
+          const dragOverClass = dragOver
+            ? this.state.dragOverBefore
+              ? " drag-over-top"
+              : " drag-over-bottom"
+            : "";
           return (
-            <div key={account.id} className="account-section">
+            <div
+              key={account.id}
+              className={`account-section${dragOverClass}`}
+              onDragOver={event => this._onAccountDragOver(event, account)}
+              onDragLeave={this._onAccountDragLeave}
+              onDrop={event => this._onAccountDrop(event, account, index)}
+            >
               <div
-                className={`account-section-header ${headerContextClass}${dragOver ? " drag-over" : ""}`}
+                className={`account-section-header ${headerContextClass}`}
                 draggable
                 onClick={() => this._toggleAccountCollapsed(account.id)}
                 onDragStart={event => this._onAccountDragStart(event, account)}
-                onDragOver={event => this._onAccountDragOver(event, account)}
-                onDragLeave={this._onAccountDragEnd}
                 onDragEnd={this._onAccountDragEnd}
-                onDrop={event => this._onAccountDrop(event, account, index)}
               >
                 <DisclosureTriangle visible collapsed={collapsed} />
                 <div className="account-section-title">{this._accountLabel(account)}</div>

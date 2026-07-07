@@ -45,12 +45,22 @@
 	font-weight: 600;
 	font-size: 0.9em;
 	color: @text-color-subtle;
-	border-top: 2px solid transparent;
 }
 
 
-.account-folders-sidebar .account-section-header.drag-over {
+.account-folders-sidebar .account-section {
+	border-top: 2px solid transparent;
+	border-bottom: 2px solid transparent;
+}
+
+
+.account-folders-sidebar .account-section.drag-over-top {
 	border-top-color: @accent-primary;
+}
+
+
+.account-folders-sidebar .account-section.drag-over-bottom {
+	border-bottom-color: @accent-primary;
 }
 
 
